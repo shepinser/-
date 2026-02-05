@@ -4,21 +4,21 @@ import sqlite3
 from datetime import datetime, date
 import random
 
-TOKEN = "ТУТ_ТВОЙ_ТОКЕН"
+TOKEN = "ТВОЙ_ТОКЕН"
 bot = telebot.TeleBot(TOKEN)
 
 # ================== БАЗА ДАННЫХ ==================
-conn = sqlite3.connect("users.db", check_same_thread=False)
+conn = sqlite3.connect("sobaken.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tg_id INTEGER UNIQUE,
+    tg_id INTEGER PRIMARY KEY,
     username TEXT,
     first_name TEXT,
     nickname TEXT,
-    reg_date TEXT
+    reg_date TEXT,
+    facts_read INTEGER DEFAULT 0
 )
 """)
 
@@ -32,32 +32,56 @@ CREATE TABLE IF NOT EXISTS fact_day (
 conn.commit()
 
 # ================== ФАКТЫ ==================
-FACTS = [
-    "Собаки способны понимать до 250 слов и жестов.",
-    "У собак уникальный отпечаток носа, как у людей отпечаток пальца.",
-    "Собаки чувствуют настроение человека по запаху.",
-    "Самая старая собака прожила 29 лет.",
-    "Собаки видят сны так же, как люди.",
-    "У собак слух в 4 раза лучше человеческого.",
-    "Хвост собаки — инструмент общения, а не просто украшение.",
-    "Собаки могут запоминать маршруты лучше GPS."
-]
+FACTS = {
+    "light": [
+        "Собаки могут узнавать хозяина по шагам.",
+        "Собака понимает до 250 слов.",
+        "Хвост — это язык эмоций собаки."
+    ],
+    "mind": [
+        "Мозг не чувствует боли.",
+        "Ты видишь прошлое — свету нужно время, чтобы дойти до глаз.",
+        "Сознание может отключаться без сна."
+    ],
+    "weird": [
+        "Бананы — это ягоды, а клубника — нет.",
+        "У осьминога три сердца.",
+        "В космосе нельзя плакать."
+    ],
+    "dogs": [
+        "Отпечаток носа у собаки уникален.",
+        "Собаки чувствуют болезни по запаху.",
+        "Собаки видят сны."
+    ],
+    "brain_break": [
+        "Ты никогда не видишь мир в реальном времени.",
+        "Мысли появляются раньше, чем ты осознаёшь их.",
+        "Мозг принимает решения за тебя."
+    ]
+}
 
-# ================== ПРОВЕРКИ ==================
+# ================== ВСПОМОГАТЕЛЬНОЕ ==================
 def is_registered(user_id):
     cursor.execute("SELECT nickname FROM users WHERE tg_id = ?", (user_id,))
-    data = cursor.fetchone()
-    return data and data[0] is not None
+    row = cursor.fetchone()
+    return row and row[0] is not None
 
-def need_registration(message):
+def block_if_not_registered(message):
     if not is_registered(message.from_user.id):
         bot.send_message(
             message.chat.id,
-            "🐶 Для начала нужно зарегистрироваться.\nНажми «Регистрация» 👇",
+            "🐶 Сначала регистрация 👇",
             reply_markup=register_keyboard()
         )
         return True
     return False
+
+def increment_facts(user_id):
+    cursor.execute(
+        "UPDATE users SET facts_read = facts_read + 1 WHERE tg_id = ?",
+        (user_id,)
+    )
+    conn.commit()
 
 # ================== КЛАВИАТУРЫ ==================
 def register_keyboard():
@@ -67,9 +91,10 @@ def register_keyboard():
 
 def main_keyboard():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("📌 Факт дня")
-    kb.add("🔁 Случайный факт")
-    kb.add("ℹ️ О боте")
+    kb.add("📌 Факт дня", "🔁 Случайный факт")
+    kb.add("⚡ Быстрый факт", "🎭 Факт по настроению")
+    kb.add("🤯 Сломай мозг")
+    kb.add("👤 Профиль")
     return kb
 
 # ================== START ==================
@@ -90,8 +115,8 @@ def start(message):
         bot.send_message(
             message.chat.id,
             "🐶 *Собакен бот*\n\n"
-            "Я полезный и залипательный бот с фактами.\n"
-            "Но сначала — регистрация 👇",
+            "Факты. Мозг. Залипание.\n"
+            "Сначала регистрация 👇",
             parse_mode="Markdown",
             reply_markup=register_keyboard()
         )
@@ -109,73 +134,125 @@ def register(message):
         bot.send_message(message.chat.id, "✅ Ты уже зарегистрирован", reply_markup=main_keyboard())
         return
 
-    msg = bot.send_message(message.chat.id, "✍️ Придумай никнейм (без пробелов):")
-    bot.register_next_step_handler(msg, save_nickname)
+    msg = bot.send_message(message.chat.id, "✍️ Введи ник (без пробелов):")
+    bot.register_next_step_handler(msg, save_nick)
 
-def save_nickname(message):
-    nickname = message.text.strip()
-
-    if " " in nickname or len(nickname) < 3:
-        msg = bot.send_message(message.chat.id, "❌ Ник без пробелов, минимум 3 символа")
-        bot.register_next_step_handler(msg, save_nickname)
+def save_nick(message):
+    nick = message.text.strip()
+    if " " in nick or len(nick) < 3:
+        msg = bot.send_message(message.chat.id, "❌ Минимум 3 символа, без пробелов")
+        bot.register_next_step_handler(msg, save_nick)
         return
 
     cursor.execute(
         "UPDATE users SET nickname = ? WHERE tg_id = ?",
-        (nickname, message.from_user.id)
+        (nick, message.from_user.id)
     )
     conn.commit()
 
     bot.send_message(
         message.chat.id,
-        f"🎉 Готово! Добро пожаловать, *{nickname}* 🐶",
+        f"🎉 Добро пожаловать, *{nick}* 🐶",
         parse_mode="Markdown",
         reply_markup=main_keyboard()
     )
 
 # ================== ФАКТ ДНЯ ==================
 @bot.message_handler(func=lambda m: m.text == "📌 Факт дня")
-def fact_of_day(message):
-    if need_registration(message):
-        return
+def fact_day(message):
+    if block_if_not_registered(message): return
 
     today = date.today().isoformat()
-
     cursor.execute("SELECT fact FROM fact_day WHERE day = ?", (today,))
     row = cursor.fetchone()
 
     if row:
         fact = row[0]
     else:
-        fact = random.choice(FACTS)
-        cursor.execute("INSERT OR IGNORE INTO fact_day (day, fact) VALUES (?, ?)", (today, fact))
+        all_facts = sum(FACTS.values(), [])
+        fact = random.choice(all_facts)
+        cursor.execute("INSERT OR IGNORE INTO fact_day VALUES (?, ?)", (today, fact))
         conn.commit()
 
+    increment_facts(message.from_user.id)
     bot.send_message(message.chat.id, f"📌 *Факт дня:*\n\n{fact}", parse_mode="Markdown")
 
 # ================== СЛУЧАЙНЫЙ ФАКТ ==================
 @bot.message_handler(func=lambda m: m.text == "🔁 Случайный факт")
 def random_fact(message):
-    if need_registration(message):
-        return
-
-    fact = random.choice(FACTS)
+    if block_if_not_registered(message): return
+    fact = random.choice(sum(FACTS.values(), []))
+    increment_facts(message.from_user.id)
     bot.send_message(message.chat.id, f"🐾 {fact}")
 
-# ================== О БОТЕ ==================
-@bot.message_handler(func=lambda m: m.text == "ℹ️ О боте")
-def about(message):
-    if need_registration(message):
-        return
+# ================== БЫСТРЫЙ ФАКТ ==================
+@bot.message_handler(func=lambda m: m.text == "⚡ Быстрый факт")
+def fast_fact(message):
+    if block_if_not_registered(message): return
+    fact = random.choice(FACTS["light"])
+    increment_facts(message.from_user.id)
+    bot.send_message(message.chat.id, f"⚡ {fact}")
+
+# ================== ФАКТ ПО НАСТРОЕНИЮ ==================
+@bot.message_handler(func=lambda m: m.text == "🎭 Факт по настроению")
+def mood(message):
+    if block_if_not_registered(message): return
+
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("😄 Лёгкий", "🤯 Мозговзрыв")
+    kb.add("😳 Странный", "🐶 Про собак")
+    kb.add("◀️ Назад")
+
+    bot.send_message(message.chat.id, "Выбери настроение:", reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text in ["😄 Лёгкий", "🤯 Мозговзрыв", "😳 Странный", "🐶 Про собак"])
+def mood_fact(message):
+    if block_if_not_registered(message): return
+
+    mapping = {
+        "😄 Лёгкий": "light",
+        "🤯 Мозговзрыв": "mind",
+        "😳 Странный": "weird",
+        "🐶 Про собак": "dogs"
+    }
+
+    fact = random.choice(FACTS[mapping[message.text]])
+    increment_facts(message.from_user.id)
+    bot.send_message(message.chat.id, fact, reply_markup=main_keyboard())
+
+# ================== СЛОМАЙ МОЗГ ==================
+@bot.message_handler(func=lambda m: m.text == "🤯 Сломай мозг")
+def brain_break(message):
+    if block_if_not_registered(message): return
+    fact = random.choice(FACTS["brain_break"])
+    increment_facts(message.from_user.id)
+    bot.send_message(message.chat.id, f"🤯 {fact}")
+
+# ================== ПРОФИЛЬ ==================
+@bot.message_handler(func=lambda m: m.text == "👤 Профиль")
+def profile(message):
+    if block_if_not_registered(message): return
+
+    cursor.execute(
+        "SELECT nickname, facts_read, reg_date FROM users WHERE tg_id = ?",
+        (message.from_user.id,)
+    )
+    nick, facts, reg = cursor.fetchone()
 
     bot.send_message(
         message.chat.id,
-        "🐶 *Собакен бот*\n\n"
-        "Полезные факты, залипательные знания\n"
-        "Заходи каждый день за новым фактом!",
+        f"👤 *Профиль*\n\n"
+        f"🐶 Ник: {nick}\n"
+        f"📖 Фактов прочитано: {facts}\n"
+        f"📅 Регистрация: {reg}",
         parse_mode="Markdown"
     )
 
+# ================== НАЗАД ==================
+@bot.message_handler(func=lambda m: m.text == "◀️ Назад")
+def back(message):
+    bot.send_message(message.chat.id, "🏠 Главное меню", reply_markup=main_keyboard())
+
 # ================== ЗАПУСК ==================
-print("Собакен бот запущен 🐾")
+print("🐶 Собакен бот запущен")
 bot.infinity_polling()
